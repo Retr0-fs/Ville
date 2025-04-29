@@ -2,7 +2,7 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <title>Ville THREE.js – Voitures & Caméras</title>
+    <title>Ville THREE.js – Collisions, Respawn et Timer</title>
     <style>
       body {
         margin: 0;
@@ -11,9 +11,22 @@
       canvas {
         display: block;
       }
+      /* Style pour le timer affiché en bas à gauche */
+      #timer {
+        position: fixed;
+        left: 10px;
+        bottom: 10px;
+        padding: 5px 10px;
+        background-color: rgba(0, 0, 0, 0.5);
+        color: #fff;
+        font-family: Arial, sans-serif;
+        font-size: 20px;
+        z-index: 100;
+      }
     </style>
   </head>
   <body>
+    <div id="timer">Survie : 0.0 s</div>
     <!-- Inclusion de THREE.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <!-- Inclusion d'OrbitControls via jsDelivr -->
@@ -21,9 +34,22 @@
     <script>
       console.log("Initialisation de la scène…");
 
-      // --- Scène, Caméra et Renderer ---
+      // VARIABLES GLOBALES
+      var gameOver = false; // Passage à true lors d'une collision
+      var startTime = performance.now();
+      var gameOverTime = 0;
+      var explosions = [];  // Références aux explosions actives
+      var buildings = [];   // Tableaux contenant les bâtiments pour la détection des collisions
+
+      // Définir un point de spawn sûr (zone verte, absence d'objet) pour la voiture contrôlée
+      var safeSpawn = new THREE.Vector3(-60, 0.5, 60);
+
+      // Création du timer (HTML déjà présent)
+      var timerDiv = document.getElementById("timer");
+
+      // --- Scène, Caméra, Renderer ---
       var scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x87ceeb); // ciel bleu
+      scene.background = new THREE.Color(0x87ceeb);
 
       var camera = new THREE.PerspectiveCamera(
         60,
@@ -38,7 +64,7 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       document.body.appendChild(renderer.domElement);
 
-      // --- Sol ---
+      // --- Sol (zone verte) ---
       var groundSize = 120;
       var groundGeom = new THREE.PlaneGeometry(groundSize, groundSize);
       var groundMat = new THREE.MeshLambertMaterial({ color: 0x228B22 });
@@ -52,22 +78,21 @@
       directionalLight.position.set(50, 50, 0);
       scene.add(directionalLight);
 
-      // --- Paramètres de la grille ---
-      var gridSize = 6; // indices de -6 à 6
-      var spacing = 10; // espacement entre les centres de cases
-      var roadWidth = 3; // largeur des routes
-      var roadColor = 0x404040; // gris foncé pour les routes
-      var buildingWidth = 4; // empreinte en X
-      var buildingDepth = 4; // empreinte en Z
+      // --- Paramètres de la grille et des objets ---
+      var gridSize = 6;          // Indices de -6 à 6 (pour générer les routes et bâtiments)
+      var spacing = 10;          // Espacement entre centres des cases
+      var roadWidth = 3;         // Largeur des routes
+      var roadColor = 0x404040;   // Couleur (gris foncé) des routes
+      var buildingWidth = 4;     // Empreinte en X des bâtiments
+      var buildingDepth = 4;     // Empreinte en Z des bâtiments
 
-      // Fonction qui indique si l'index correspond à une route (toutes les 3ème cases)
+      // Fonction pour déterminer si une cellule correspond à une route (toutes les 3ème cases)
       function isRoad(index) {
         return ((index + gridSize) % 3 === 0);
       }
 
       // --- Création des routes ---
-
-      // Routes verticales : orientées selon l'axe Z
+      // Routes verticales (sens Z)
       for (var i = -gridSize; i <= gridSize; i++) {
         if (isRoad(i)) {
           var roadGeomV = new THREE.PlaneGeometry(roadWidth, groundSize);
@@ -78,8 +103,7 @@
           scene.add(roadMeshV);
         }
       }
-
-      // Routes horizontales : orientées selon l'axe X
+      // Routes horizontales (sens X)
       for (var j = -gridSize; j <= gridSize; j++) {
         if (isRoad(j)) {
           var roadGeomH = new THREE.PlaneGeometry(groundSize, roadWidth);
@@ -91,9 +115,9 @@
         }
       }
 
-      // --- Création des bâtiments en nuances de gris ---
-      // On délimite des blocs entre deux routes consécutives en X et en Z.
-      // Dans chaque bloc, on génère un nombre aléatoire de bâtiments compris entre 4 et 8.
+      // --- Création des bâtiments ---
+      // Pour chaque bloc délimité par deux routes consécutives en X et en Z,
+      // on génère un nombre aléatoire de bâtiments (entre 4 et 8)
       var roadXPositions = [];
       var roadZPositions = [];
       for (var i = -gridSize; i <= gridSize; i++) {
@@ -102,51 +126,41 @@
       for (var j = -gridSize; j <= gridSize; j++) {
         if (isRoad(j)) roadZPositions.push(j * spacing);
       }
-      // Marge pour éviter que les bâtiments ne touchent les routes
-      var buildingMargin = 4;
+      var buildingMargin = 4; // Marge pour éviter que les bâtiments ne touchent les routes
       for (var bx = 0; bx < roadXPositions.length - 1; bx++) {
         for (var bz = 0; bz < roadZPositions.length - 1; bz++) {
-          var blockXMin = roadXPositions[bx];
-          var blockXMax = roadXPositions[bx + 1];
-          var blockZMin = roadZPositions[bz];
-          var blockZMax = roadZPositions[bz + 1];
+          var blockXMin = roadXPositions[bx],
+              blockXMax = roadXPositions[bx + 1],
+              blockZMin = roadZPositions[bz],
+              blockZMax = roadZPositions[bz + 1];
 
-          var availXMin = blockXMin + buildingMargin;
-          var availXMax = blockXMax - buildingMargin;
-          var availZMin = blockZMin + buildingMargin;
-          var availZMax = blockZMax - buildingMargin;
+          var availXMin = blockXMin + buildingMargin,
+              availXMax = blockXMax - buildingMargin,
+              availZMin = blockZMin + buildingMargin,
+              availZMax = blockZMax - buildingMargin;
 
-          // Nombre aléatoire de bâtiments dans ce bloc (entre 4 et 8)
-          var numBuildings = Math.floor(Math.random() * 5) + 4;
+          var numBuildings = Math.floor(Math.random() * 5) + 4; // Entre 4 et 8 bâtiments
           for (var n = 0; n < numBuildings; n++) {
             var xPos = Math.random() * (availXMax - availXMin) + availXMin;
             var zPos = Math.random() * (availZMax - availZMin) + availZMin;
-            var height = Math.random() * 20 + 10; // hauteur entre 10 et 30
-
-            // Couleur en gris (R=G=B) entre 0.3 et 0.7
-            var greyValue = Math.random() * 0.4 + 0.3;
+            var height = Math.random() * 20 + 10; // Hauteur entre 10 et 30
+            var greyValue = Math.random() * 0.4 + 0.3; // Nuance de gris entre 0.3 et 0.7
             var buildingColor = new THREE.Color(greyValue, greyValue, greyValue);
-
-            var buildingGeom = new THREE.BoxGeometry(
-              buildingWidth,
-              height,
-              buildingDepth
-            );
+            var buildingGeom = new THREE.BoxGeometry(buildingWidth, height, buildingDepth);
             var buildingMat = new THREE.MeshLambertMaterial({ color: buildingColor });
             var building = new THREE.Mesh(buildingGeom, buildingMat);
             building.position.set(xPos, height / 2, zPos);
             scene.add(building);
+            buildings.push(building);
           }
         }
       }
 
       // --- Création des voitures automatisées ---
-      // Six voitures de couleurs différentes qui circulent sur les routes.
       var carColors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff];
       var cars = [];
       var carGeom = new THREE.BoxGeometry(2, 1, 4);
-
-      // Voitures sur les routes verticales (déplacement selon l'axe Z) : indices -3, 0 et 3
+      // Voitures sur les routes verticales (axe Z) – indices choisis : -3, 0 et 3
       var verticalRoadIndices = [-3, 0, 3];
       for (var k = 0; k < verticalRoadIndices.length; k++) {
         var carMat = new THREE.MeshLambertMaterial({ color: carColors[k] });
@@ -161,8 +175,7 @@
           speed: 0.5 + Math.random() * 0.3
         });
       }
-
-      // Voitures sur les routes horizontales (déplacement selon l'axe X) : indices -3, 0 et 3
+      // Voitures sur les routes horizontales (axe X) – indices choisis : -3, 0 et 3
       var horizontalRoadIndices = [-3, 0, 3];
       for (var k = 0; k < horizontalRoadIndices.length; k++) {
         var carMat = new THREE.MeshLambertMaterial({ color: carColors[k + 3] });
@@ -179,35 +192,30 @@
         });
       }
 
-      // --- Voiture contrôlée par l'utilisateur ---
-      // Voiture noire que l'on contrôle avec : Z (avancer), S (reculer), Q (tourner à gauche), D (tourner à droite)
+      // --- Voiture contrôlée par l'utilisateur (voiture noire) ---
       var userCar = new THREE.Mesh(
         carGeom,
         new THREE.MeshLambertMaterial({ color: 0x000000 })
       );
-      // Position initiale sur une route (ici, x = -3 * spacing et z = 0)
-      userCar.position.set(-3 * spacing, 0.5, 0);
-      userCar.rotation.y = 0; // face vers -Z par défaut
+      // On positionne la voiture utilisateur sur le point de spawn sûr
+      userCar.position.copy(safeSpawn);
+      // Orientation par défaut (ici, on la fait pointer vers -Z, par exemple)
+      userCar.rotation.y = 0;
       scene.add(userCar);
 
       // --- Contrôle clavier pour la voiture utilisateur & basculement de caméra ---
       var keysPressed = {};
       var moveSpeed = 0.5;
       var rotationSpeed = 0.03;
-      // Variable pour le mode de suivi (chase mode) : si vrai, la caméra suit la voiture (vue de derrière)
-      var chaseMode = false;
+      var chaseMode = false; // false = mode "City" (OrbitControls), true = mode "Chase" (caméra suivant la voiture)
 
       document.addEventListener("keydown", function (e) {
         var key = e.key.toLowerCase();
         keysPressed[key] = true;
-        // Touche "C" pour basculer entre City (OrbitControls) et Chase (suivi de la voiture)
+        // Touche "C" pour basculer entre City et Chase
         if (key === "c") {
           chaseMode = !chaseMode;
-          if (chaseMode) {
-            controls.enabled = false;
-          } else {
-            controls.enabled = true;
-          }
+          controls.enabled = !chaseMode;
         }
       });
       document.addEventListener("keyup", function (e) {
@@ -215,23 +223,114 @@
         keysPressed[key] = false;
       });
 
-      // --- OrbitControls pour la vue "ville" ---
+      // --- OrbitControls pour la vue "City" ---
       var controls = new THREE.OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.autoRotate = true;
       controls.autoRotateSpeed = 0.5;
 
+      // --- Fonction d'explosion ---
+      function createExplosion(position) {
+        var explosionGeom = new THREE.SphereGeometry(1, 32, 32);
+        var explosionMat = new THREE.MeshBasicMaterial({
+          color: 0xffa500,
+          transparent: true,
+          opacity: 1
+        });
+        var explosionMesh = new THREE.Mesh(explosionGeom, explosionMat);
+        explosionMesh.position.copy(position);
+        // Enregistrer le temps de départ, la durée (en ms) et l'échelle maximale
+        explosionMesh.userData = { startTime: performance.now(), duration: 1000, maxScale: 5 };
+        scene.add(explosionMesh);
+        explosions.push(explosionMesh);
+      }
+
+      function explodeObject(obj) {
+        createExplosion(obj.position);
+        scene.remove(obj);
+      }
+
+      // --- Détection des collisions pour la voiture utilisateur ---
+      function checkCollisions() {
+        var userBox = new THREE.Box3().setFromObject(userCar);
+        // Vérifier collision avec les bâtiments
+        for (var i = 0; i < buildings.length; i++) {
+          var buildingBox = new THREE.Box3().setFromObject(buildings[i]);
+          if (userBox.intersectsBox(buildingBox)) {
+            explodeObject(userCar);
+            gameOver = true;
+            gameOverTime = performance.now();
+            return;
+          }
+        }
+        // Vérifier collision avec les voitures automatisées
+        for (var i = 0; i < cars.length; i++) {
+          var carBox = new THREE.Box3().setFromObject(cars[i].mesh);
+          if (userBox.intersectsBox(carBox)) {
+            explodeObject(userCar);
+            explodeObject(cars[i].mesh);
+            gameOver = true;
+            gameOverTime = performance.now();
+            return;
+          }
+        }
+      }
+
       // --- Boucle d'animation ---
       function animate() {
         requestAnimationFrame(animate);
+        var currentTime = performance.now();
 
-        // Mise à jour de OrbitControls seulement en mode City
-        if (!chaseMode) {
-          controls.update();
+        // Mise à jour du timer (temps de survie)
+        var elapsed = gameOver ? (gameOverTime - startTime) : (currentTime - startTime);
+        timerDiv.innerHTML = "Survie : " + (elapsed / 1000).toFixed(1) + " s";
+
+        // Mise à jour des explosions (bulle qui grossit et s'estompe)
+        for (var i = explosions.length - 1; i >= 0; i--) {
+          var exp = explosions[i];
+          var elapsedExp = currentTime - exp.userData.startTime;
+          var duration = exp.userData.duration;
+          if (elapsedExp < duration) {
+            var scale = 1 + (exp.userData.maxScale - 1) * (elapsedExp / duration);
+            exp.scale.set(scale, scale, scale);
+            exp.material.opacity = 1 - (elapsedExp / duration);
+          } else {
+            scene.remove(exp);
+            explosions.splice(i, 1);
+          }
         }
 
-        // Animation des voitures automatisées
-        cars.forEach(function (car) {
+        // Si la voiture contrôlée n'est pas explosée, gérer son contrôle
+        if (!gameOver) {
+          if (keysPressed["z"]) {
+            userCar.position.x -= Math.sin(userCar.rotation.y) * moveSpeed;
+            userCar.position.z -= Math.cos(userCar.rotation.y) * moveSpeed;
+          }
+          if (keysPressed["s"]) {
+            userCar.position.x += Math.sin(userCar.rotation.y) * moveSpeed;
+            userCar.position.z += Math.cos(userCar.rotation.y) * moveSpeed;
+          }
+          if (keysPressed["q"]) {
+            userCar.rotation.y += rotationSpeed;
+          }
+          if (keysPressed["d"]) {
+            userCar.rotation.y -= rotationSpeed;
+          }
+          checkCollisions();
+        } else {
+          // Si la voiture a explosé, attendre 3 secondes avant de réapparaitre
+          if (currentTime - gameOverTime >= 3000) {
+            // Réapparition à la zone de spawn sûre
+            userCar.position.copy(safeSpawn);
+            userCar.rotation.set(0, 0, 0);
+            scene.add(userCar);
+            gameOver = false;
+            startTime = currentTime;
+          }
+        }
+
+        // Mise à jour des voitures automatisées
+        cars.forEach(function(car) {
           if (car.axis === "z") {
             car.mesh.position.z += car.speed;
             if (car.mesh.position.z > car.max) {
@@ -245,40 +344,22 @@
           }
         });
 
-        // Mise à jour de la voiture contrôlée par l'utilisateur en fonction des touches
-        if (keysPressed["z"]) {
-          userCar.position.x -= Math.sin(userCar.rotation.y) * moveSpeed;
-          userCar.position.z -= Math.cos(userCar.rotation.y) * moveSpeed;
-        }
-        if (keysPressed["s"]) {
-          userCar.position.x += Math.sin(userCar.rotation.y) * moveSpeed;
-          userCar.position.z += Math.cos(userCar.rotation.y) * moveSpeed;
-        }
-        if (keysPressed["q"]) {
-          userCar.rotation.y += rotationSpeed;
-        }
-        if (keysPressed["d"]) {
-          userCar.rotation.y -= rotationSpeed;
-        }
-
-        // Si le mode chase est activé, la caméra suit la voiture contrôlée (vue de derrière)
-        if (chaseMode) {
-          // Définir un décalage relatif : ici, la caméra sera 5 unités au-dessus et 10 unités derrière la voiture
-          var relativeCameraOffset = new THREE.Vector3(0, 5, 10);
-          // Convertir ce décalage dans l'espace monde selon la transformation de la voiture
-          var chaseCameraPosition = relativeCameraOffset
-            .clone()
-            .applyMatrix4(userCar.matrixWorld);
-          // Interpoler doucement la position de la caméra pour un effet fluide
-          camera.position.lerp(chaseCameraPosition, 0.1);
+        // Mise à jour de la caméra
+        if (chaseMode && !gameOver) {
+          // La caméra suit la voiture utilisateur avec un décalage (5 unités en hauteur et 10 unités derrière)
+          var relativeOffset = new THREE.Vector3(0, 5, 10);
+          var chasePos = relativeOffset.clone().applyMatrix4(userCar.matrixWorld);
+          camera.position.lerp(chasePos, 0.1);
           camera.lookAt(userCar.position);
+        } else if (!chaseMode) {
+          controls.update();
         }
 
         renderer.render(scene, camera);
       }
       animate();
 
-      // --- Gestion du redimensionnement de la fenêtre ---
+      // --- Gestion du redimensionnement ---
       window.addEventListener("resize", function () {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
