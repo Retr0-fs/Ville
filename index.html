@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Ville dynamique en THREE.js</title>
+    <style>
+      body { margin: 0; overflow: hidden; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <!-- Inclusion de THREE.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Inclusion d’OrbitControls pour le contrôle de la caméra -->
+    <script src="https://threejs.org/examples/js/controls/OrbitControls.js"></script>
+    <script>
+      // Création de la scène avec un fond bleu ciel
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x87ceeb);
+
+      // Définition de la caméra
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      camera.position.set(60, 40, 60);
+      camera.lookAt(0, 0, 0);
+
+      // Création du renderer
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Création du sol (herbe)
+      const groundGeometry = new THREE.PlaneGeometry(200, 200);
+      const groundMaterial = new THREE.MeshLambertMaterial({ color: 0x228B22 });
+      const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+      ground.rotation.x = -Math.PI / 2;
+      scene.add(ground);
+
+      // Ajout des éclairages ambiant et directionnel
+      const ambientLight = new THREE.AmbientLight(0xcccccc, 0.5);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+      directionalLight.position.set(50, 50, 0);
+      scene.add(directionalLight);
+
+      // Paramètres pour la ville
+      const gridSize = 10;       // nombre de cases de chaque côté
+      const spacing = 5;         // espacement entre les cases
+      const roadColor = 0x404040; // couleur des routes (gris foncé)
+      const roadWidth = 5;       // largeur des routes
+      const buildingWidth = 2.5; // largeur des bâtiments
+      const buildingDepth = 2.5; // profondeur des bâtiments
+
+      // Pour dessiner un agencement en grille, on considère que chaque 3ème index est une route.
+      function isRoad(index) {
+        return ((index + gridSize) % 3 === 0);
+      }
+
+      // Création des routes verticales
+      for (let i = -gridSize; i <= gridSize; i++) {
+        if (isRoad(i)) {
+          const roadGeometry = new THREE.PlaneGeometry(roadWidth, 200);
+          const roadMaterial = new THREE.MeshLambertMaterial({ color: roadColor });
+          const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
+          roadMesh.rotation.x = -Math.PI / 2;
+          roadMesh.position.set(i * spacing, 0.02, 0);
+          scene.add(roadMesh);
+        }
+      }
+
+      // Création des routes horizontales
+      for (let j = -gridSize; j <= gridSize; j++) {
+        if (isRoad(j)) {
+          const roadGeometry = new THREE.PlaneGeometry(200, roadWidth);
+          const roadMaterial = new THREE.MeshLambertMaterial({ color: roadColor });
+          const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
+          roadMesh.rotation.x = -Math.PI / 2;
+          roadMesh.position.set(0, 0.03, j * spacing);
+          scene.add(roadMesh);
+        }
+      }
+
+      // Création des bâtiments dans les cases qui ne sont pas des routes
+      function createBuilding(x, z) {
+        // Hauteur aléatoire entre 3 et 10
+        const height = Math.random() * 7 + 3;
+        const buildingGeometry = new THREE.BoxGeometry(buildingWidth, height, buildingDepth);
+        const buildingMaterial = new THREE.MeshLambertMaterial({ color: Math.random() * 0xffffff });
+        const building = new THREE.Mesh(buildingGeometry, buildingMaterial);
+        // Positionner la base du bâtiment sur le sol
+        building.position.set(x, height / 2, z);
+        scene.add(building);
+      }
+
+      for (let i = -gridSize; i <= gridSize; i++) {
+        for (let j = -gridSize; j <= gridSize; j++) {
+          // Si la case n'est pas réservée à une route
+          if (!isRoad(i) && !isRoad(j)) {
+            const x = i * spacing + (Math.random() - 0.5) * 1;
+            const z = j * spacing + (Math.random() - 0.5) * 1;
+            createBuilding(x, z);
+          }
+        }
+      }
+
+      // Création de voitures animées sur les routes
+      const cars = [];
+      const carGeometry = new THREE.BoxGeometry(1, 0.5, 2);
+      const carMaterial = new THREE.MeshLambertMaterial({ color: 0xff0000 });
+
+      // Voiture circulant sur une route verticale.
+      // On choisit par exemple la route correspondant à un certain index (ici -4 après décalage).
+      let verticalRoadIndex = -4;
+      if (!isRoad(verticalRoadIndex)) verticalRoadIndex = -gridSize;
+      const carVertical = new THREE.Mesh(carGeometry, carMaterial);
+      carVertical.position.set(verticalRoadIndex * spacing, 0.25, -50);
+      scene.add(carVertical);
+      cars.push({
+        mesh: carVertical,
+        axis: "z",
+        min: -50,
+        max: 50,
+        speed: 0.2
+      });
+
+      // Voiture circulant sur une route horizontale.
+      let horizontalRoadIndex = -4;
+      if (!isRoad(horizontalRoadIndex)) horizontalRoadIndex = -gridSize;
+      const carHorizontal = new THREE.Mesh(carGeometry, carMaterial);
+      carHorizontal.rotation.y = Math.PI / 2; // Oriente la voiture pour rouler horizontalement
+      carHorizontal.position.set(-50, 0.25, horizontalRoadIndex * spacing);
+      scene.add(carHorizontal);
+      cars.push({
+        mesh: carHorizontal,
+        axis: "x",
+        min: -50,
+        max: 50,
+        speed: 0.2
+      });
+
+      // Ajout d'OrbitControls pour contrôler la caméra avec la souris.
+      // L'option autoRotate permet à la caméra de tourner lentement autour de la ville.
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 0.5;
+
+      // Boucle d'animation : mise à jour des voitures, des contrôles et rendu de la scène.
+      function animate() {
+        requestAnimationFrame(animate);
+
+        // Mise à jour des commandes (incluant la rotation automatique)
+        controls.update();
+
+        // Animation des voitures sur leur trajectoire
+        cars.forEach(car => {
+          if (car.axis === "z") {
+            car.mesh.position.z += car.speed;
+            if (car.mesh.position.z > car.max) {
+              car.mesh.position.z = car.min;
+            }
+          } else if (car.axis === "x") {
+            car.mesh.position.x += car.speed;
+            if (car.mesh.position.x > car.max) {
+              car.mesh.position.x = car.min;
+            }
+          }
+        });
+
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // Ajustement de la scène lors du redimensionnement de la fenêtre
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
+  </body>
+</html>
